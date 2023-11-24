@@ -5,6 +5,10 @@
 
 #include <DirectXMath.h>
 
+// @Tutorial2 CHANGES begin
+#include "LocalChanges.h"
+// @Tutorial2 CHANGES end
+
 class Tutorial2 : public Game
 {
 public:
@@ -70,6 +74,12 @@ private:
     void ResizeDepthBuffer(int width, int height);
     
     uint64_t m_FenceValues[Window::BufferCount] = {};
+
+#if !INTERLEAVED_VERTEX_BUFFER_FORMAT
+    // Two vertex buffers for the position and color of the cube in packed format
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_VertexBufferArr[2];
+    D3D12_VERTEX_BUFFER_VIEW m_VertexBufferViewArr[2];
+#endif
 
     // Vertex buffer for the cube.
     Microsoft::WRL::ComPtr<ID3D12Resource> m_VertexBuffer;

@@ -22,7 +22,6 @@ using namespace Microsoft::WRL;
 
 using namespace DirectX;
 
-
 // Clamp a value between a min and max range.
 template<typename T>
 constexpr const T& clamp(const T& val, const T& min, const T& max)
@@ -47,6 +46,33 @@ static VertexPosColor g_Vertices[8] = {
     { XMFLOAT3(1.0f,  1.0f,  1.0f), XMFLOAT3(1.0f, 1.0f, 1.0f) }, // 6
     { XMFLOAT3(1.0f, -1.0f,  1.0f), XMFLOAT3(1.0f, 0.0f, 1.0f) }  // 7
 };
+
+
+#if !INTERLEAVED_VERTEX_BUFFER_FORMAT
+static XMFLOAT3 VertexPos[8] =
+{
+	XMFLOAT3(-1.0f, -1.0f, -1.0f),
+	XMFLOAT3(-1.0f,  1.0f, -1.0f),
+	XMFLOAT3(1.0f,  1.0f, -1.0f),
+	XMFLOAT3(1.0f, -1.0f, -1.0f),
+	XMFLOAT3(-1.0f, -1.0f,  1.0f),
+	XMFLOAT3(-1.0f,  1.0f,  1.0f),
+	XMFLOAT3(1.0f,  1.0f,  1.0f),
+	XMFLOAT3(1.0f, -1.0f,  1.0f)
+};
+
+static XMFLOAT3 VertexColor[8] =
+{
+ XMFLOAT3(0.0f, 0.0f, 0.0f),
+ XMFLOAT3(0.0f, 1.0f, 0.0f),
+ XMFLOAT3(1.0f, 1.0f, 0.0f),
+ XMFLOAT3(1.0f, 0.0f, 0.0f),
+ XMFLOAT3(0.0f, 0.0f, 1.0f),
+ XMFLOAT3(0.0f, 1.0f, 1.0f),
+ XMFLOAT3(1.0f, 1.0f, 1.0f),
+ XMFLOAT3(1.0f, 0.0f, 1.0f)
+};
+#endif
 
 static WORD g_Indicies[36] =
 {
@@ -109,12 +135,37 @@ void Tutorial2::UpdateBufferResource(
     }
 }
 
-
 bool Tutorial2::LoadContent()
 {
     auto device = Application::Get().GetDevice();
     auto commandQueue = Application::Get().GetCommandQueue(D3D12_COMMAND_LIST_TYPE_COPY);
     auto commandList = commandQueue->GetCommandList();
+
+
+#if !INTERLEAVED_VERTEX_BUFFER_FORMAT
+     // Upload vertex buffer data.
+    ComPtr<ID3D12Resource> intermediateVertexBufferPos;
+    UpdateBufferResource(commandList,
+        &m_VertexBufferArr[0], &intermediateVertexBufferPos,
+        _countof(VertexPos), sizeof(XMFLOAT3), VertexPos);
+
+    // Create the vertex buffer view.
+    m_VertexBufferViewArr[0].BufferLocation = m_VertexBufferArr[0]->GetGPUVirtualAddress();
+    m_VertexBufferViewArr[0].SizeInBytes = sizeof(VertexPos);
+    m_VertexBufferViewArr[0].StrideInBytes = sizeof(XMFLOAT3);
+
+    // Upload vertex buffer data.
+    ComPtr<ID3D12Resource> intermediateVertexBufferCol;
+    UpdateBufferResource(commandList,
+        &m_VertexBufferArr[1], &intermediateVertexBufferCol,
+        _countof(VertexColor), sizeof(XMFLOAT3), VertexColor);
+
+
+    // Create the vertex buffer view.
+    m_VertexBufferViewArr[1].BufferLocation = m_VertexBufferArr[1]->GetGPUVirtualAddress();
+    m_VertexBufferViewArr[1].SizeInBytes = sizeof(VertexColor);
+    m_VertexBufferViewArr[1].StrideInBytes = sizeof(XMFLOAT3);
+#endif
 
     // Upload vertex buffer data.
     ComPtr<ID3D12Resource> intermediateVertexBuffer;
@@ -132,7 +183,6 @@ bool Tutorial2::LoadContent()
     UpdateBufferResource(commandList,
         &m_IndexBuffer, &intermediateIndexBuffer,
         _countof(g_Indicies), sizeof(WORD), g_Indicies);
-
     // Create index buffer view.
     m_IndexBufferView.BufferLocation = m_IndexBuffer->GetGPUVirtualAddress();
     m_IndexBufferView.Format = DXGI_FORMAT_R16_UINT;
@@ -153,11 +203,20 @@ bool Tutorial2::LoadContent()
     ComPtr<ID3DBlob> pixelShaderBlob;
     ThrowIfFailed(D3DReadFileToBlob(L"PixelShader.cso", &pixelShaderBlob));
 
+#if !STRUCTURED_BUFFER_AS_VB
+#if INTERLEAVED_VERTEX_BUFFER_FORMAT
     // Create the vertex input layout
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
+#else
+    D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
+    { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 1, D3D12_APPEND_ALIGNED_ELEMENT, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+#endif
+#endif
 
     // Create a root signature.
     D3D12_FEATURE_DATA_ROOT_SIGNATURE featureData = {};
@@ -169,15 +228,23 @@ bool Tutorial2::LoadContent()
 
     // Allow input layout and deny unnecessary access to certain pipeline stages.
     D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags =
+#if !STRUCTURED_BUFFER_AS_VB
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+#endif
         D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS;
 
+#if STRUCTURED_BUFFER_AS_VB
+    CD3DX12_ROOT_PARAMETER1 rootParameters[2];
+    rootParameters[0].InitAsConstants(sizeof(XMMATRIX) / 4, 0, 0, D3D12_SHADER_VISIBILITY_VERTEX);
+    rootParameters[1].InitAsShaderResourceView(0, 0, D3D12_ROOT_DESCRIPTOR_FLAG_NONE, D3D12_SHADER_VISIBILITY_VERTEX);
+#else
     // A single 32-bit constant root parameter that is used by the vertex shader.
     CD3DX12_ROOT_PARAMETER1 rootParameters[1];
     rootParameters[0].InitAsConstants(sizeof(XMMATRIX) / 4, 0, 0, D3D12_SHADER_VISIBILITY_VERTEX);
+#endif
 
     CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDescription;
     rootSignatureDescription.Init_1_1(_countof(rootParameters), rootParameters, 0, nullptr, rootSignatureFlags);
@@ -207,7 +274,9 @@ bool Tutorial2::LoadContent()
     rtvFormats.RTFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
 
     pipelineStateStream.pRootSignature = m_RootSignature.Get();
+#if !STRUCTURED_BUFFER_AS_VB
     pipelineStateStream.InputLayout = { inputLayout, _countof(inputLayout) };
+#endif
     pipelineStateStream.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pipelineStateStream.VS = CD3DX12_SHADER_BYTECODE(vertexShaderBlob.Get());
     pipelineStateStream.PS = CD3DX12_SHADER_BYTECODE(pixelShaderBlob.Get());
@@ -257,7 +326,7 @@ void Tutorial2::ResizeDepthBuffer(int width, int height)
             &optimizedClearValue,
             IID_PPV_ARGS(&m_DepthBuffer)
         ));
-
+       
         // Update the depth-stencil view.
         D3D12_DEPTH_STENCIL_VIEW_DESC dsv = {};
         dsv.Format = DXGI_FORMAT_D32_FLOAT;
@@ -378,7 +447,15 @@ void Tutorial2::OnRender(RenderEventArgs& e)
     commandList->SetGraphicsRootSignature(m_RootSignature.Get());
 
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+#if !STRUCTURED_BUFFER_AS_VB
+#if INTERLEAVED_VERTEX_BUFFER_FORMAT
     commandList->IASetVertexBuffers(0, 1, &m_VertexBufferView);
+#else
+    commandList->IASetVertexBuffers(0, 2, &m_VertexBufferViewArr[0]);
+#endif
+#endif
+// @LOCAL_CHANGES it's possible probably not to have an index buffer as well by using DrawInstanced but vertex cache might not get utilized
     commandList->IASetIndexBuffer(&m_IndexBufferView);
 
     commandList->RSSetViewports(1, &m_Viewport);
@@ -391,7 +468,19 @@ void Tutorial2::OnRender(RenderEventArgs& e)
     mvpMatrix = XMMatrixMultiply(mvpMatrix, m_ProjectionMatrix);
     commandList->SetGraphicsRoot32BitConstants(0, sizeof(XMMATRIX) / 4, &mvpMatrix, 0);
 
+#if STRUCTURED_BUFFER_AS_VB
+    commandList->SetGraphicsRootShaderResourceView(1, m_VertexBuffer->GetGPUVirtualAddress());
+#endif
+
+#if DRAW_INDEXED_MULTIPLE
+    for (unsigned int i = 0; i < 10000; ++i)
+    {
+        commandList->DrawIndexedInstanced(_countof(g_Indicies), 1, 0, 0, 0);
+    }
+#else
     commandList->DrawIndexedInstanced(_countof(g_Indicies), 1, 0, 0, 0);
+#endif
+
 
     // Present
     {
